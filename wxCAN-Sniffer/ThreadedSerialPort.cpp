@@ -1,7 +1,60 @@
 ﻿#include "ThreadedSerialPort.h"
 
 #if __APPLE__
-#include <libserialport.h>
+struct CFTypeRefDeleter
+{
+    void operator() (CFTypeRef entity)
+    {
+        if (entity)
+            CFRelease(entity);
+    }
+    typedef CFTypeRef pointer;
+};
+using CFTypeRefPtr = std::unique_ptr<CFTypeRef, CFTypeRefDeleter>;
+
+template<int BufferSize = PATH_MAX>
+static wxString convertToWxString(const CFTypeRefPtr& property)
+{
+    char buffer[BufferSize];
+    if (CFStringGetCString((CFStringRef)property.get(), buffer, sizeof(buffer), kCFStringEncodingASCII))
+        return buffer;
+    return "";
+};
+
+static wxString getPortDescription(const io_object_t& port)
+{
+    CFTypeRefPtr productName(IORegistryEntrySearchCFProperty(port, kIOServicePlane, CFSTR("Product Name"), kCFAllocatorDefault, kIORegistryIterateRecursively | kIORegistryIterateParents));
+    if (productName)
+        return convertToWxString(productName);
+
+    CFTypeRefPtr cf_property(IORegistryEntryCreateCFProperty(port, CFSTR(kIOTTYDeviceKey), kCFAllocatorDefault, 0));
+    if (cf_property)
+        return convertToWxString(cf_property);
+    return "";
+};
+
+static bool searchPortIntegerParameter(const io_object_t& port, CFStringRef paramName, int& value)
+{
+    CFTypeRefPtr param(IORegistryEntrySearchCFProperty(port, kIOServicePlane, paramName, kCFAllocatorDefault, kIORegistryIterateRecursively | kIORegistryIterateParents));
+    return param && CFNumberGetValue((CFNumberRef)param.get(), kCFNumberIntType, &value);
+}
+
+static wxString getPortHardwareID(const io_object_t& port)
+{
+    wxString result;
+    int vid = 0, pid = 0;
+    if (searchPortIntegerParameter(port, CFSTR("idVendor"), vid) && searchPortIntegerParameter(port, CFSTR("idProduct"), vid))
+        result = wxString::Format(wxT("VID: 04%d, PID: %04d"), vid, pid);;
+
+    CFTypeRefPtr serialNumber(IORegistryEntrySearchCFProperty(port, kIOServicePlane, CFSTR("USB Serial Number"), kCFAllocatorDefault, kIORegistryIterateRecursively | kIORegistryIterateParents));
+    if (serialNumber)
+    {
+        if (!result.IsEmpty())
+            result += wxT(", ");
+        result += wxT("Serial number: ") + convertToWxString(serialNumber);
+    }
+    return result;
+}
 #endif
 
 // Конструктор
@@ -578,33 +631,25 @@ std::vector<ThreadedSerialPort::Information> ThreadedSerialPort::Enumerate()
 #endif
 
 #ifdef __APPLE__
-    struct sp_port** enumeratedPorts = nullptr;
-    if (SP_OK == sp_list_ports(&enumeratedPorts))
+    if (CFMutableDictionaryRef classes = IOServiceMatching(kIOSerialBSDServiceValue))
     {
-        int index = 0;
-        while (auto enumeratedPort = enumeratedPorts[index])
+        io_iterator_t iter;
+        if (IOServiceGetMatchingServices(kIOMainPortDefault, classes, &iter) == KERN_SUCCESS)
         {
-            Information info;
-            auto szName = sp_get_port_name(enumeratedPort);
-            if (szName)
+            while (io_object_t port = IOIteratorNext(iter))
             {
-                wxFileName fileName(szName);
-                info.Port = fileName.GetFullName();
-                info.Description = sp_get_port_description(enumeratedPort);
-                int vid = 0, pid = 0;
-                if (SP_OK == sp_get_port_usb_vid_pid(enumeratedPort, &vid, &pid))
+                CFTypeRefPtr cf_path(IORegistryEntryCreateCFProperty(port, CFSTR(kIOCalloutDeviceKey), kCFAllocatorDefault, 0));
+                if (cf_path)
                 {
-                    wxString hardwareID = wxT("vid_") + wxString::Format(wxT("%d"), (int)vid);
-                    hardwareID += wxT("&pid_") + wxString::Format(wxT("%d"), (int)pid);
-                    info.HardwareID = hardwareID;
+                    wxString path = convertToWxString(cf_path);
+                    if (!path.IsEmpty())
+                        ports.emplace_back(Information{wxFileName(path).GetFullName(), getPortDescription(port), getPortHardwareID(port)});
                 }
-                ports.push_back(info);
+                IOObjectRelease(port);
             }
-            index++;
+            IOObjectRelease(iter);
         }
-        sp_free_port_list(enumeratedPorts);
     }
-
 #endif
 
     sort(ports.begin(), ports.end());
