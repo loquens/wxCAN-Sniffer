@@ -136,7 +136,7 @@
 #define TEXT_1                      wxT('1')
 #define TEXT_NUMBER_BLOCK_SEPARATOR wxT('_')
 
-#if __WXMAC__
+#if __APPLE__
 
 #define MENU_FILE                   wxT("Файл")
 #define MENU_FILE_NEW_WINDOW        wxT("Новое окно\tCtrl+N")

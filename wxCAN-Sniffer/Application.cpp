@@ -7,7 +7,7 @@ bool Application::OnInit()
         //locale.AddCatalog(GetAppDir() + wxT("\\."));
     }
 
-    #ifdef __WXMAC__
+    #ifdef __APPLE__
         wxApp::SetExitOnFrameDelete(false);
 
         wxMenuBar *menubar = new wxMenuBar;
