@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include <stdint.h>
+
 #include <wx/wx.h>
 #include <wx/ffile.h>
 #include "Parameters.h"
